@@ -18,19 +18,15 @@ class CombatHudDetector {
                 regions["radar"]
             ])
             topCapture := ScreenCapture.CaptureRegionPixels(topRegion)
-            readyCapture := ScreenCapture.CaptureRegionPixels(regions["ready"])
             weaponsCapture := ScreenCapture.CaptureRegionPixels(regions["weapons"])
             viewCapture := ScreenCapture.CaptureRegionPixels(regions["view"])
             for name in ["left", "score", "radar", "hp", "shield"]
                 captures[name] := topCapture
-            captures["ready"] := readyCapture
             captures["weapons"] := weaponsCapture
             captures["lock"] := viewCapture
             captures["target"] := viewCapture
             if !topCapture["ok"]
                 errorMessage := "顶部 HUD 截图失败：" topCapture["error"]
-            else if !readyCapture["ok"]
-                errorMessage := "READY 截图失败：" readyCapture["error"]
         }
 
         if (errorMessage = "" && captures.Has("weapons") && !captures["weapons"]["ok"])
@@ -54,7 +50,7 @@ class CombatHudDetector {
         radarHit := anchorResult["radar"]
         anchorHits := anchorResult["count"]
         matched := anchorHits >= CombatHudDetector.RequiredAnchorHits
-        ready := matched && CombatHudDetector.DetectReady(captures["ready"], regions["ready"])
+        ready := false
         hpPercent := matched ? CombatHudDetector.MeasureGauge(captures["hp"], regions["hp"], "HP") : ""
         shieldPercent := matched ? CombatHudDetector.MeasureGauge(captures["shield"], regions["shield"], "SHIELD") : ""
         selectedWeapon := matched ? CombatHudDetector.DetectSelectedWeapon(captures["weapons"], regions["weapon_slots"]) : 0
@@ -116,14 +112,13 @@ class CombatHudDetector {
             "left", CombatHudDetector.RelativeRegion(clientRect, 0.02, 0.02, 0.205, 0.125),
             "score", CombatHudDetector.RelativeRegion(clientRect, 0.40, 0.02, 0.59, 0.14),
             "radar", CombatHudDetector.RelativeRegion(clientRect, 0.80, 0.02, 0.995, 0.32),
-            "ready", CombatHudDetector.RelativeRegion(clientRect, 0.54, 0.84, 0.68, 0.96),
             "hp", CombatHudDetector.RelativeRegion(clientRect, 0.068, 0.058, 0.184, 0.069),
             "shield", CombatHudDetector.RelativeRegion(clientRect, 0.068, 0.083, 0.184, 0.094),
             "weapons", CombatHudDetector.RelativeRegion(clientRect, 0.245, 0.865, 0.765, 1.0),
             "weapon_slots", weaponSlots,
-            "view", CombatHudDetector.RelativeRegion(clientRect, 0.08, 0.20, 0.92, 0.82),
+            "view", CombatHudDetector.RelativeRegion(clientRect, 0.10, 0.20, 0.90, 0.80),
             "lock", CombatHudDetector.RelativeRegion(clientRect, 0.38, 0.30, 0.62, 0.72),
-            "target", CombatHudDetector.RelativeRegion(clientRect, 0.08, 0.20, 0.92, 0.78)
+            "target", CombatHudDetector.RelativeRegion(clientRect, 0.10, 0.20, 0.90, 0.80)
         )
     }
 
@@ -242,9 +237,9 @@ class CombatHudDetector {
         if (width <= 0 || height <= 0)
             return Map("presence", "UNKNOWN", "lock_state", "UNKNOWN", "count", 0, "lock_score", 0.0)
 
-        step := 4
-        minRunSamples := Max(5, Round(width * 0.018 / step))
-        maxRunSamples := Max(minRunSamples + 1, Round(width * 0.16 / step))
+        step := 10
+        minRunSamples := Max(1, Ceil(width * 0.015 / step))
+        maxRunSamples := Max(minRunSamples + 1, Round(width * 0.15 / step))
         rowSegments := []
         y := 0
         while (y < height) {
@@ -265,7 +260,7 @@ class CombatHudDetector {
                     gap := 0
                 } else if (runStart >= 0) {
                     gap += 1
-                    if (gap > 2) {
+                    if (gap > 1) {
                         CombatHudDetector.AddMarkerSegment(rowSegments, y, runStart, x - gap * step, runHits, minRunSamples, maxRunSamples)
                         runStart := -1
                         runHits := 0
@@ -276,7 +271,7 @@ class CombatHudDetector {
             }
             if (runStart >= 0)
                 CombatHudDetector.AddMarkerSegment(rowSegments, y, runStart, width - 1, runHits, minRunSamples, maxRunSamples)
-            y += 2
+            y += 3
         }
 
         candidates := []
@@ -444,11 +439,11 @@ class CombatHudDetector {
     }
 
     static IsEnemyMarkerRed(r, g, b) {
-        return r >= 165 && g <= 130 && b <= 140 && r - g >= 55 && r - b >= 45
+        return r >= 200 && g <= 100 && b <= 100
     }
 
     static IsLockGreen(r, g, b) {
-        return g >= 150 && r >= 50 && r <= 220 && b <= 205 && g - r >= 15 && g - b >= 5
+        return g >= 200 && g - r >= 20 && g - b >= 30 && b <= 200
     }
 
     static MeasureRegionColors(capture, region, step := 3) {
@@ -607,42 +602,6 @@ class CombatHudDetector {
         return Clamp((lastHit + 1) * 100 / width, 0, 100)
     }
 
-    static DetectReady(capture, region) {
-        if !capture["ok"]
-            return false
-        localX := Round(region["x"] - capture["x"])
-        localY := Round(region["y"] - capture["y"])
-        if (localX < 0 || localY < 0 || localX + region["w"] > capture["w"] || localY + region["h"] > capture["h"])
-            return false
-        qualifyingRows := []
-        sampleStep := 2
-        sampleWidth := Ceil(region["w"] / sampleStep)
-        minRun := Round(sampleWidth * 0.35)
-        Loop region["h"] {
-            y := localY + A_Index - 1
-            rowOffset := y * capture["stride"] + localX * 4
-            longest := 0
-            current := 0
-            Loop sampleWidth {
-                pixel := NumGet(capture["bits"], rowOffset + (A_Index - 1) * sampleStep * 4, "UInt")
-                b := pixel & 255
-                g := (pixel >> 8) & 255
-                r := (pixel >> 16) & 255
-                if CombatHudDetector.IsReadyWhite(r, g, b) {
-                    current += 1
-                    longest := Max(longest, current)
-                } else {
-                    current := 0
-                }
-            }
-            if (longest >= minRun)
-                qualifyingRows.Push(region["y"] + y - localY)
-        }
-        if (qualifyingRows.Length < 2)
-            return false
-        return qualifyingRows[qualifyingRows.Length] - qualifyingRows[1] >= region["h"] * 0.15
-    }
-
     static IsHudCyan(r, g, b) {
         return g >= 170 && b >= 185 && b - r >= 35
     }
@@ -653,10 +612,6 @@ class CombatHudDetector {
 
     static IsShieldFill(r, g, b) {
         return g >= 180 && g - r >= 30 && g - b >= 15
-    }
-
-    static IsReadyWhite(r, g, b) {
-        return Min(r, g, b) >= 190 && Max(r, g, b) - Min(r, g, b) <= 65
     }
 
     static Median(values) {

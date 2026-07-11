@@ -5,12 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 - **Run monitor**: `run.bat` (finds AutoHotkey64.exe via registry or default path)
-- **Run demo window**: `run_demo.bat` (for testing detectors/overlay without the game)
+- **Run demo window**: `run_demo.bat` (interactive test window for detectors/overlay)
 - **Syntax check**: `"D:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" main.ahk --check`
-- **Smoke test**: `"D:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests\smoke_test.ahk`
-- **Live combat test**: `"D:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests\combat_live_test.ahk`
+- **Live combat test** (requires game): `"D:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests\combat_live_test.ahk`
 - **Combat screenshot calibration**: `"D:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests\combat_screenshot_test.ahk screenshot.png 61` (second arg = client top Y offset)
-- **Room self-slot live test**: `"D:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests\room_self_live_test.ahk`
+- **Room self-slot live test** (requires game): `"D:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests\room_self_live_test.ahk`
 - No package manager, bundler, or test framework — AHK v2 is interpreted directly.
 
 ## Architecture
@@ -52,7 +51,7 @@ The `#Include` order in `main.ahk` is strict — later files depend on earlier o
 - **Entry** (`main.ahk`): `MonitorApp` class — instantiates all services, builds status GUI, registers Ctrl+Alt+F12 hotkey, logs startup geometry, starts scheduler.
 - **Core** (`core/`): config loading, logger (text + JSONL), window finding with foreground detection, event bus state machine, scheduler.
 - **Capture** (`capture/`): `PixelCapture` (PixelGetColor), `ScreenCapture` (GDI BitBlt → pixel buffer with memchr-based color matching via `CountColorMatches()` which uses `SelectSearchChannel()` to pick the B/G/R channel farthest from 128 for fastest `memchr` scanning).
-- **Detectors** (`detectors/`): `ColorDetector`, `ImageDetector` (ImageSearch), `ChangeDetector` (region color diff), `RoomStateDetector` (12-slot player list analysis), `CombatHudDetector` (3-anchor HUD detection with HP/SHIELD/READY gauges).
+- **Detectors** (`detectors/`): `ColorDetector`, `ImageDetector` (ImageSearch), `ChangeDetector` (region color diff), `RoomStateDetector` (12-slot player list analysis), `CombatHudDetector` (3-anchor HUD detection with HP/SHIELD gauges and target/lock tracking).
 - **Overlay** (`overlay/`): transparent per-element GUIs with `PlaceOutsideRegion()` positioning.
 - **Config** (`config/`): `monitor.ini` (runtime settings), `elements.csv` (UI element definitions with 18 columns).
 
@@ -73,7 +72,7 @@ Every `*Detector.Detect()` returns a Map with these fields (callers read `result
 
 Room_slots additionally returns: `occupied_count`, `ready_count`, `master_count`, `self_candidate_index`, `self_candidate_margin`, `self_top_index`, `self_slot_index`.
 
-Combat HUD returns: `combat_active`, `combat_phase` (READY/ACTIVE), `hp_percent`, `shield_percent`, `anchor_hits`, `anchor_left`, `anchor_score`, `anchor_radar`, `ready_raw`.
+Combat HUD returns: `combat_active`, `combat_phase` (ACTIVE), `hp_percent`, `shield_percent`, `anchor_hits`, `anchor_left`, `anchor_score`, `anchor_radar`, `selected_weapon_slot`, `weapon_slots[]`, `lock_state`, `target_presence`, `target_marker_count`, `lock_marker_score`.
 
 ### Room State Detector (核心模块)
 
@@ -106,7 +105,7 @@ The event bus (`MonitorEventBus.ProcessSelfCandidate`) applies 3-frame + element
 
 ### Combat HUD Detector
 
-`CombatHudDetector.Detect()` captures the full client region once via GDI BitBlt, then analyzes three anchor zones:
+`CombatHudDetector.Detect()` captures the full client region via GDI BitBlt (top for anchors/gauges, weapons area, and center view), then analyzes:
 
 | Anchor | Client region | Detection |
 |---|---|---|
@@ -116,20 +115,39 @@ The event bus (`MonitorEventBus.ProcessSelfCandidate`) applies 3-frame + element
 
 **Match rule**: ≥ 2 of 3 anchors (`RequiredAnchorHits := 2`). Each anchor is validated via `MeasureHudColors()` using stepped pixel sampling (step = min(w,h)/60).
 
-**Gauge reading** (`MeasureGauge`): samples 3 horizontal lines at 25%/50%/75% height of the gauge region, scans left-to-right for HP-fill (`IsHpFill`: cyan-blue with green ≥ 180, blue ≥ 195, blue-red ≥ 30) or SHIELD-fill (`IsShieldFill`: green with green ≥ 180, green-red ≥ 30, green-blue ≥ 15). Uses gap tolerance (2% of width). Returns median of the 3 line values, or `""` when fewer than 2 valid lines.
+**Performance baseline** (2560×1440 client): ~392K pixel samples per frame + 4 GDI BitBlt transfers (~3.8M pixels). Bottlenecks are target marker analysis (~40K samples, step=10, y+=5) and lock bracket detection (~47K samples, step=3). Gauge reading (`MeasureGauge`) samples 3 horizontal lines at 25%/50%/75% height for HP (`IsHpFill`: g≥180, b≥195, b-r≥30) and SHIELD (`IsShieldFill`: g≥180, g-r≥30, g-b≥15) with 2% gap tolerance; returns median of valid lines.
 
-**READY detection** (`DetectReady`): scans the ready region for horizontal runs of white text pixels (`IsReadyWhite`: min(r,g,b) ≥ 190, max-min ≤ 65) ≥ 35% of region width across ≥ 2 rows spanning ≥ 15% of region height.
+**Target marker analysis** (`AnalyzeTargetMarkers`): scans 10%-90% x 20%-80% region for enemy arrow markers by finding paired horizontal red runs (`IsEnemyMarkerRed`: r≥200, g≤100, b≤100) then verifying arrow stem support. deduplication dedup within 4% width / 6% height. lockScore computed from marker proximity to screen center: `score = max(0, 1.0 - |x/w-0.5|/0.075 - |y/h-0.48|/0.20)`, threshold ≥ 0.40 → LOCKED.
+
+**Lock bracket detection** (`DetectLockBrackets`): step=3 across 38%-62% x 30%-72% region, scans for symmetric green (IsLockGreen) clusters on left/right of center, requiring min count + 10% vertical span on both sides.
+
+**SourceCapture injection**: `Detect()` accepts a pre-captured pixel buffer as `sourceCapture` parameter. When provided, all region captures reference the same buffer instead of calling GDI BitBlt. Used by `tests/combat_screenshot_test.ahk` and `tests/combat_live_test.ahk` to test against a screenshot or live frame without re-capturing. The top region (`left`+`score`+`radar` union) is used for gauge analysis (hp, shield), so gauge pixels must be within the union.
+
+### Combat Details Event System
+
+`MonitorEventBus.ProcessCombatDetails` handles per-frame combat HUD detail events with **independent frame counting** separate from the main event bus debounce:
+
+| Event | Required frames | Direction |
+|---|---|---|
+| `WEAPON_SELECTED_CHANGED` | 2 consecutive | same value |
+| `WEAPON_SLOT_AVAILABLE` / `UNAVAILABLE` | 2 consecutive | same value |
+| `LOCK_ACQUIRED` | 2 consecutive | LOCKED |
+| `LOCK_LOST` | 3 consecutive | UNLOCKED |
+| `TARGET_APPEARED` | 2 consecutive | PRESENT |
+| `TARGET_DISAPPEARED` | 3 consecutive | ABSENT |
+
+Each detail field uses `AdvanceDetailField()` which tracks `{stable, pending, count}` and only emits after `requiredFrames` of identical values. The lock and target use asymmetric thresholds (more frames to lose than acquire) to reduce flicker.
 
 ### Combat State Tracker
 
-`CombatStateTracker` is a standalone debounce state machine used by the scheduler for scene transitions:
+`CombatStateTracker` is used by the scheduler for scene transitions — two instances: one for combat presence, one (legacy) for READY:
 
 | Transition | Required frames | Required ms |
 |---|---|---|
 | Combat enter | 2 (enterFrames) | 250 (enterMs) |
 | Combat exit | 3 (exitFrames) | 500 (exitMs) |
 
-Both frame count AND elapsed time must be satisfied. `Reset()` clears pending state without forcing a transition. The scheduler uses two trackers: one for combat presence and one for READY detection.
+Both frame count AND elapsed time must be satisfied. `Reset()` clears pending state without forcing a transition.
 
 ### Event Bus — Slot State Machine + Snapshot Guard
 
@@ -147,13 +165,14 @@ Both frame count AND elapsed time must be satisfied. `Reset()` clears pending st
 - **Room warmup** (`WarmupRoom`): after combat exits, the scheduler requires 3 consecutive non-empty room snapshots before room overlay resumes.
 - **Room empty timeout** (`HandleRoomSnapshot`): 3 consecutive empty snapshots mark the room as stale, hiding overlay and restarting room warmup.
 - **Scene gating** (`SceneAllowed`): ROOM-scoped elements are skipped during combat; COMBAT-scoped elements are skipped outside combat. ANY-scoped elements always run.
+- **lastCombatResult persistence**: when combat is active but the current frame briefly loses HUD detection, `RunCombatHud` holds onto `this.lastCombatResult` to keep HP/SHIELD/anchor values stable instead of flickering. Only cleared on EXIT transition.
 
 ### Overlay Positioning
 
 OverlayManager handles three placement strategies:
 - **Room slot overlay**: position via `PlaceOutsideRegion()` — tries right, left, below, above the monitored region; falls back to clamped screen bounds.
 - **Non-slot overlay** (e.g. start_button): same `PlaceOutsideRegion()` but fixed size 300×128.
-- **Combat HUD overlay**: position via `PlaceCombatOverlay()` — fixed at bottom-right of the client area (7% right margin, 14% bottom margin from `clientRect`), size 200×130.
+- **Combat HUD overlay**: position via `PlaceCombatOverlay()` — fixed at bottom-right of the client area (7% right margin, 8% bottom margin from `clientRect`), size 200×130.
 
 Each overlay is a captionless, borderless transparent GUI (`CreateItem()`: `-Caption +ToolWindow +Border -DPIScale`) with `#202020` background, `Microsoft YaHei UI` white text, configurable opacity (20–100%, default 55%), and optional click-through (`+E0x20`). Per-element GUIs are created on first `Update()` and cached in `this.items`.
 
@@ -163,7 +182,7 @@ Slot lines display as `"01号 已准备 ★我"` — 2-digit zero-padded index, 
 
 `config/monitor.ini` sections: `[develop]` (sibling project path), `[window]` (target exe/title, reference 1040x807 coords), `[lanes]` (fast 16ms/medium 250ms/slow 3000ms), `[overlay]` (opacity 20-100%), `[logging]`.
 
-`config/elements.csv` columns (18): `id,enabled,lane,method,capture_type,region_x,region_y,region_w,region_h,template_path,color_hex,tolerance,threshold,debounce_ms,cooldown_ms,event_type,overlay`. Methods: `color`, `image`, `change`, `room_slots`, `combat_hud`.
+`config/elements.csv` columns (18): `id,enabled,lane,method,capture_type,region_x,region_y,region_w,region_h,template_path,color_hex,tolerance,threshold,debounce_ms,cooldown_ms,event_type,overlay,scene`. Methods: `color`, `image`, `change`, `room_slots`, `combat_hud`.
 
 Parsed via `CsvParseLine` from utils.ahk — not `StrSplit` — because one element row can break 18-field parsing. Region coordinates are at 1040x807 reference and scaled live via `WindowManager.ScaleRegion()`.
 
@@ -187,13 +206,19 @@ Two log files generated on each session start under `logs/`:
 
 ## Testing Guidelines
 
-- Smoke test (`tests/smoke_test.ahk`) validates config loading, ScaleRegion, BuildSlotBounds, BuildSlotRegions, HasMinimumMatches, CountColorMatches, SelectSearchChannel, PlaceOutsideRegion, event bus (single + slot + snapshot guard), self-identity transitions, and element config. Run before committing.
-- For detector/overlay changes: run `run_demo.bat` to test against `tools/demo_target.ahk`.
+- For detector/overlay changes: run `run_demo.bat` to test against `tools/demo_target.ahk`. The demo window has interactive keyboard shortcuts (H/h for HP +/-).
 - For slot detection changes: `tests/room_self_live_test.ahk` tests live against the game.
-- For combat HUD changes: `tests/combat_live_test.ahk` tests live; `tests/combat_screenshot_test.ahk` tests against a provided screenshot for calibration without the game.
+- For combat HUD changes: `tests/combat_live_test.ahk` tests live; `tests/combat_screenshot_test.ahk` tests against a provided screenshot for calibration without the game. Both use the `sourceCapture` parameter to inject a pre-captured pixel buffer into `CombatHudDetector.Detect()`.
 - No unit test framework — add test scripts as `tests\*_test.ahk` with `#Include` module dependencies.
-- The smoke test includes `BuildSlotBounds` validation for slot indices 1, 6, 12 and snapshot guard mass-change suppression.
 
 ## Security Invariant
 
 Monitor pixels and window regions only. No memory reads, process injection, or anti-cheat bypass. This is enforced in `README.md`, `AGENTS.md`, and the config loading code that explicitly avoids any game memory access.
+
+## Demo Target Tool
+
+`tools/demo_target.ahk` is an interactive test window that simulates a game HUD display. Keyboard controls while focused:
+- `H` / `h` — cycle HP values (85 → 50 → 15 → 85)
+- `S` / `s` — toggle skill status ON/OFF
+- `B` / `b` — toggle buff status ON/OFF  
+- `P` / `p` — save a screenshot PNG to `logs/` via `ScreenCapture.CaptureRegionPixels()`

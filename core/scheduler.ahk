@@ -148,7 +148,6 @@ class Scheduler {
 
         rawActive := result["matched"]
         combatUpdate := this.combatState.Update(rawActive)
-        readyUpdate := this.readyState.Update(rawActive && result["ready_raw"])
         this.combatActive := combatUpdate["active"]
 
         if rawActive {
@@ -161,7 +160,7 @@ class Scheduler {
 
         result["matched"] := this.combatActive
         result["combat_active"] := this.combatActive
-        result["combat_phase"] := readyUpdate["active"] ? "READY" : "ACTIVE"
+        result["combat_phase"] := "ACTIVE"
         result["combat_transition"] := combatUpdate["changed"]
             ? (this.combatActive ? "ENTER" : "EXIT")
             : ""
