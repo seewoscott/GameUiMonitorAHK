@@ -15,6 +15,7 @@ class MonitorEventBus {
         this.lastSelfCandidateLog := Map()
         this.slotSnapshotGuards := Map()
         this.lastSnapshotGuardLog := Map()
+        this.combatDetailStates := Map()
     }
 
     Process(element, result, region) {
@@ -85,10 +86,180 @@ class MonitorEventBus {
         state := this.states[id]
         state["stable"] := result["matched"]
         if (transition = "ENTER")
+        {
+            this.InitializeCombatDetails(id, result)
             return this.Emit(element, result, region, "ON_APPEAR", state, now)
-        if (transition = "EXIT")
+        }
+        if (transition = "EXIT") {
+            if this.combatDetailStates.Has(id)
+                this.combatDetailStates.Delete(id)
             return this.Emit(element, result, region, "ON_DISAPPEAR", state, now)
+        }
+        if result["combat_active"]
+            return this.ProcessCombatDetails(element, result, region, now)
         return ""
+    }
+
+    InitializeCombatDetails(id, result) {
+        detail := Map(
+            "selected", this.NewDetailField(result.Has("selected_weapon_slot") ? result["selected_weapon_slot"] : 0),
+            "lock", this.NewDetailField(result.Has("lock_state") ? result["lock_state"] : "UNKNOWN"),
+            "target", this.NewDetailField(result.Has("target_presence") ? result["target_presence"] : "UNKNOWN"),
+            "slots", Map()
+        )
+        if result.Has("weapon_slots") {
+            for _, slot in result["weapon_slots"]
+                detail["slots"][slot["index"]] := this.NewDetailField(slot["state"])
+        }
+        this.combatDetailStates[id] := detail
+        this.ApplyStableCombatDetails(result, detail)
+    }
+
+    NewDetailField(value) {
+        return Map("stable", value, "pending", "", "count", 0)
+    }
+
+    ProcessCombatDetails(element, result, region, now) {
+        id := element["id"]
+        if !this.combatDetailStates.Has(id) {
+            this.InitializeCombatDetails(id, result)
+            return ""
+        }
+        detail := this.combatDetailStates[id]
+        summaryEvent := ""
+
+        selected := result.Has("selected_weapon_slot") ? result["selected_weapon_slot"] : 0
+        if (selected > 0 && detail["selected"]["stable"] = 0) {
+            detail["selected"]["stable"] := selected
+        } else if (selected > 0 && this.AdvanceDetailField(detail["selected"], selected, 2)) {
+            previous := detail["selected"]["previous"]
+            this.EmitCombatDetail(element, result, region, "WEAPON_SELECTED_CHANGED", now, Map(
+                "previous_weapon_slot", previous,
+                "selected_weapon_slot", selected
+            ))
+            summaryEvent := "WEAPON_SELECTED_CHANGED"
+        }
+
+        if result.Has("weapon_slots") {
+            for _, slot in result["weapon_slots"] {
+                index := slot["index"]
+                if !detail["slots"].Has(index)
+                    detail["slots"][index] := this.NewDetailField(slot["state"])
+                if (slot["state"] != "UNKNOWN" && detail["slots"][index]["stable"] = "UNKNOWN") {
+                    detail["slots"][index]["stable"] := slot["state"]
+                } else if (slot["state"] != "UNKNOWN" && this.AdvanceDetailField(detail["slots"][index], slot["state"], 2)) {
+                    eventName := slot["state"] = "AVAILABLE" ? "WEAPON_SLOT_AVAILABLE" : "WEAPON_SLOT_UNAVAILABLE"
+                    this.EmitCombatDetail(element, result, region, eventName, now, Map(
+                        "weapon_slot_index", index,
+                        "weapon_slot_state", slot["state"],
+                        "previous_weapon_slot_state", detail["slots"][index]["previous"]
+                    ))
+                    if (summaryEvent = "")
+                        summaryEvent := eventName
+                }
+            }
+        }
+
+        lockState := result.Has("lock_state") ? result["lock_state"] : "UNKNOWN"
+        lockFrames := lockState = "LOCKED" ? 2 : 3
+        if (lockState != "UNKNOWN" && detail["lock"]["stable"] = "UNKNOWN") {
+            detail["lock"]["stable"] := lockState
+        } else if (lockState != "UNKNOWN" && this.AdvanceDetailField(detail["lock"], lockState, lockFrames)) {
+            eventName := lockState = "LOCKED" ? "LOCK_ACQUIRED" : "LOCK_LOST"
+            this.EmitCombatDetail(element, result, region, eventName, now, Map("lock_state", lockState))
+            if (summaryEvent = "")
+                summaryEvent := eventName
+        }
+
+        targetPresence := result.Has("target_presence") ? result["target_presence"] : "UNKNOWN"
+        targetFrames := targetPresence = "PRESENT" ? 2 : 3
+        if (targetPresence != "UNKNOWN" && detail["target"]["stable"] = "UNKNOWN") {
+            detail["target"]["stable"] := targetPresence
+        } else if (targetPresence != "UNKNOWN" && this.AdvanceDetailField(detail["target"], targetPresence, targetFrames)) {
+            eventName := targetPresence = "PRESENT" ? "TARGET_APPEARED" : "TARGET_DISAPPEARED"
+            this.EmitCombatDetail(element, result, region, eventName, now, Map("target_presence", targetPresence))
+            if (summaryEvent = "")
+                summaryEvent := eventName
+        }
+
+        this.ApplyStableCombatDetails(result, detail)
+        return summaryEvent
+    }
+
+    AdvanceDetailField(field, candidate, requiredFrames) {
+        if (candidate = field["stable"]) {
+            field["pending"] := ""
+            field["count"] := 0
+            return false
+        }
+        if (candidate != field["pending"]) {
+            field["pending"] := candidate
+            field["count"] := 1
+            return false
+        }
+        field["count"] += 1
+        if (field["count"] < requiredFrames)
+            return false
+        field["previous"] := field["stable"]
+        field["stable"] := candidate
+        field["pending"] := ""
+        field["count"] := 0
+        return true
+    }
+
+    ApplyStableCombatDetails(result, detail) {
+        result["selected_weapon_slot"] := detail["selected"]["stable"]
+        result["lock_state"] := detail["lock"]["stable"]
+        result["target_presence"] := detail["target"]["stable"]
+        if result.Has("weapon_slots") {
+            for _, slot in result["weapon_slots"] {
+                if detail["slots"].Has(slot["index"])
+                    slot["state"] := detail["slots"][slot["index"]]["stable"]
+            }
+        }
+    }
+
+    EmitCombatDetail(element, result, region, eventName, now, extra) {
+        data := Map(
+            "ts", NowStamp(),
+            "id", element["id"],
+            "lane", element["lane"],
+            "method", element["method"],
+            "event", eventName,
+            "matched", true,
+            "score", result["score"],
+            "combat_active", true,
+            "region", [region["x"], region["y"], region["w"], region["h"]],
+            "latency_ms", result["latency_ms"],
+            "message_zh", this.CombatDetailMessage(eventName, extra)
+        )
+        for key, value in extra
+            data[key] := value
+        if result.Has("target_marker_count")
+            data["target_marker_count"] := result["target_marker_count"]
+        if result.Has("lock_marker_score")
+            data["lock_marker_score"] := result["lock_marker_score"]
+        this.logger.Event(data)
+    }
+
+    CombatDetailMessage(eventName, data) {
+        switch eventName {
+            case "WEAPON_SELECTED_CHANGED":
+                return "当前武器切换：" data["previous_weapon_slot"] " -> " data["selected_weapon_slot"]
+            case "WEAPON_SLOT_AVAILABLE":
+                return "武器槽位 " data["weapon_slot_index"] " 已可用"
+            case "WEAPON_SLOT_UNAVAILABLE":
+                return "武器槽位 " data["weapon_slot_index"] " 已不可用"
+            case "LOCK_ACQUIRED":
+                return "已锁定目标"
+            case "LOCK_LOST":
+                return "目标锁定已丢失"
+            case "TARGET_APPEARED":
+                return "视野内出现敌方目标"
+            case "TARGET_DISAPPEARED":
+                return "视野内敌方目标消失"
+        }
+        return eventName
     }
 
     ProcessSlots(element, result, region) {

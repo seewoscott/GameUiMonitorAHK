@@ -132,6 +132,20 @@ JsonString(value) {
 
 EventZh(eventName) {
     switch eventName {
+        case "WEAPON_SELECTED_CHANGED":
+            return "武器切换"
+        case "WEAPON_SLOT_AVAILABLE":
+            return "武器可用"
+        case "WEAPON_SLOT_UNAVAILABLE":
+            return "武器不可用"
+        case "LOCK_ACQUIRED":
+            return "锁定目标"
+        case "LOCK_LOST":
+            return "锁定丢失"
+        case "TARGET_APPEARED":
+            return "目标出现"
+        case "TARGET_DISAPPEARED":
+            return "目标消失"
         case "ON_APPEAR":
             return "出现"
         case "ON_DISAPPEAR":

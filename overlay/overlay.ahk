@@ -35,8 +35,8 @@ class OverlayManager {
         item["text"].Text := text
 
         if result.Has("combat_active") {
-            w := 200
-            h := 130
+            w := 350
+            h := 350
             position := OverlayManager.PlaceCombatOverlay(region, w, h)
         } else {
             w := result.Has("slots") ? Max(Round(region["w"] * 2 / 3), 100) : 300
@@ -79,6 +79,22 @@ class OverlayManager {
         anchors .= result["anchor_left"] ? "L" : "_"
         anchors .= result["anchor_score"] ? "S" : "_"
         anchors .= result["anchor_radar"] ? "R" : "_"
+        if result.Has("selected_weapon_slot") {
+            selected := result["selected_weapon_slot"] > 0 ? result["selected_weapon_slot"] : "?"
+            slotParts := []
+            if result.Has("weapon_slots") {
+                for _, slot in result["weapon_slots"] {
+                    marker := slot["state"] = "AVAILABLE" ? "A" : (slot["state"] = "UNAVAILABLE" ? "U" : "?")
+                    slotParts.Push(slot["index"] ":" marker)
+                }
+            }
+            lockText := result.Has("lock_state") && result["lock_state"] = "LOCKED" ? "是" : (result.Has("lock_state") && result["lock_state"] = "UNLOCKED" ? "否" : "?")
+            targetText := result.Has("target_presence") && result["target_presence"] = "PRESENT" ? "有" : (result.Has("target_presence") && result["target_presence"] = "ABSENT" ? "无" : "?")
+            return "战斗 " phase "`nHP " hp "`nSHIELD " shield
+                . "`n武器 " selected "`n" JoinArray(slotParts, " ")
+                . "`n锁定 " lockText "`n目标 " targetText
+                . "`n" anchors " " result["latency_ms"] "ms"
+        }
         return "战斗 " phase "`nHP " hp "`nSHIELD " shield "`n" anchors " " result["latency_ms"] "ms"
     }
 
@@ -119,7 +135,7 @@ class OverlayManager {
 
     static PlaceCombatOverlay(clientRect, w, h) {
         rightMargin := Round(clientRect["w"] * 0.07)
-        bottomMargin := Round(clientRect["h"] * 0.14)
+        bottomMargin := Round(clientRect["h"] * 0.08)
         x := clientRect["x"] + clientRect["w"] - w - rightMargin
         y := clientRect["y"] + clientRect["h"] - h - bottomMargin
         return Map(

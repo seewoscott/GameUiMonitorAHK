@@ -85,6 +85,9 @@ class MonitorLogger {
         order := [
             "ts", "id", "lane", "method", "event", "event_zh", "message_zh",
             "matched", "score", "combat_active", "combat_phase", "hp_percent", "shield_percent", "anchor_hits",
+            "selected_weapon_slot", "previous_weapon_slot", "weapon_slot_index", "weapon_slot_state",
+            "previous_weapon_slot_state", "lock_state", "target_presence", "weapon_slots",
+            "target_marker_count", "lock_marker_score",
             "slot_index", "is_self", "self_score", "self_border_top", "self_border_bottom",
             "self_border_center", "self_candidate_margin", "self_slot_index", "state", "state_zh",
             "previous_state", "previous_state_zh", "room_summary_zh",
@@ -119,7 +122,16 @@ class MonitorLogger {
             return Format("{:.6f}", value + 0)
         if (key = "hp_percent" || key = "shield_percent")
             return value = "" ? "null" : Round(value + 0) ""
-        if (key = "latency_ms" || key = "slot_index" || key = "self_slot_index" || key = "anchor_hits")
+        if (
+            key = "latency_ms"
+            || key = "slot_index"
+            || key = "self_slot_index"
+            || key = "anchor_hits"
+            || key = "selected_weapon_slot"
+            || key = "previous_weapon_slot"
+            || key = "weapon_slot_index"
+            || key = "target_marker_count"
+        )
             return Round(value + 0) ""
         if (key = "region" && IsObject(value)) {
             items := []

@@ -28,6 +28,13 @@ output .= " anchors=" result["anchor_hits"]
 output .= " ready=" result["ready_raw"]
 output .= " hp=" result["hp_percent"]
 output .= " shield=" result["shield_percent"]
+output .= " weapon=" result["selected_weapon_slot"]
+for _, slot in result["weapon_slots"]
+    output .= " slot" slot["index"] "=" slot["state"]
+output .= " lock=" result["lock_state"]
+output .= " target=" result["target_presence"]
+output .= " markers=" result["target_marker_count"]
+output .= " lockScore=" Format("{:.2f}", result["lock_marker_score"])
 output .= " latency=" result["latency_ms"] "ms`n"
 outputPath := A_Args.Length >= 3 ? A_Args[3] : A_Temp "\combat-screenshot-result.txt"
 try FileDelete(outputPath)

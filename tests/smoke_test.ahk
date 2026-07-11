@@ -118,6 +118,42 @@ if (!combatResult["matched"] || combatResult["anchor_hits"] != 3 || !combatResul
     ExitApp(1)
 if (Abs(combatResult["hp_percent"] - 50) > 2 || combatResult["shield_percent"] < 98)
     ExitApp(1)
+if (combatRegions["weapon_slots"].Length != 5 || !combatResult.Has("lock_state") || !combatResult.Has("target_presence"))
+    ExitApp(1)
+
+for _, slotRegion in combatRegions["weapon_slots"]
+    FillTestRegion(combatCapture, slotRegion, 30, 35, 40)
+FillTestRegion(combatCapture, combatRegions["weapon_slots"][2], 80, 220, 245)
+selectedWeapon := CombatHudDetector.DetectSelectedWeapon(combatCapture, combatRegions["weapon_slots"])
+if (selectedWeapon != 2)
+    ExitApp(1)
+weaponStates := CombatHudDetector.DetectWeaponSlots(combatCapture, combatRegions["weapon_slots"], selectedWeapon)
+if (weaponStates[2]["state"] != "AVAILABLE" || weaponStates[1]["state"] != "UNAVAILABLE")
+    ExitApp(1)
+
+FillTestRegion(combatCapture, combatRegions["target"], 20, 30, 40)
+targetRegion := combatRegions["target"]
+arrowX := targetRegion["x"] + Round(targetRegion["w"] * 0.48)
+arrowY := targetRegion["y"] + Round(targetRegion["h"] * 0.25)
+FillTestRegion(combatCapture, Map("x", arrowX, "y", arrowY, "w", 60, "h", 3), 230, 40, 40)
+FillTestRegion(combatCapture, Map("x", arrowX, "y", arrowY + 14, "w", 60, "h", 3), 230, 40, 40)
+FillTestRegion(combatCapture, Map("x", arrowX + 50, "y", arrowY, "w", 3, "h", 80), 230, 40, 40)
+directionOnly := CombatHudDetector.AnalyzeTargetMarkers(combatCapture, targetRegion)
+if (directionOnly["presence"] != "ABSENT" || directionOnly["lock_state"] != "UNLOCKED")
+    ExitApp(1)
+
+FillTestRegion(combatCapture, targetRegion, 20, 30, 40)
+markerWidth := Round(targetRegion["w"] * 0.08)
+markerLeft := targetRegion["x"] + Round((targetRegion["w"] - markerWidth) / 2)
+markerTop := targetRegion["y"] + Round(targetRegion["h"] * 0.45)
+FillTestRegion(combatCapture, Map("x", markerLeft, "y", markerTop, "w", markerWidth, "h", 3), 230, 40, 40)
+FillTestRegion(combatCapture, Map("x", markerLeft, "y", markerTop + 16, "w", markerWidth, "h", 3), 230, 40, 40)
+FillTestRegion(combatCapture, Map("x", markerLeft + 10, "y", markerTop - 18, "w", 24, "h", 6), 230, 40, 40)
+FillTestRegion(combatCapture, Map("x", markerLeft + 18, "y", markerTop + 24, "w", 8, "h", 8), 230, 40, 40)
+FillTestRegion(combatCapture, Map("x", markerLeft + 34, "y", markerTop + 24, "w", 8, "h", 8), 230, 40, 40)
+markerResult := CombatHudDetector.AnalyzeTargetMarkers(combatCapture, targetRegion)
+if (markerResult["presence"] != "PRESENT" || markerResult["count"] < 1)
+    ExitApp(1)
 
 strongStats := Map("cyan", 0.20, "dark", 0.20, "red", 0.01, "green", 0.05)
 weakStats := Map("cyan", 0.0, "dark", 0.0, "red", 0.0, "green", 0.0)
@@ -319,6 +355,15 @@ combatJson := logger.ToJsonLine(Map(
     "anchor_hits", 3
 ))
 if !InStr(combatJson, '"combat_active":true') || !InStr(combatJson, '"hp_percent":60') || !InStr(combatJson, '"anchor_hits":3')
+    ExitApp(1)
+detailJson := logger.ToJsonLine(Map(
+    "selected_weapon_slot", 2,
+    "weapon_slot_index", 3,
+    "weapon_slot_state", "UNAVAILABLE",
+    "lock_state", "LOCKED",
+    "target_presence", "PRESENT"
+))
+if !InStr(detailJson, '"selected_weapon_slot":2') || !InStr(detailJson, '"weapon_slot_index":3') || !InStr(detailJson, '"lock_state":"LOCKED"')
     ExitApp(1)
 
 massSlots := []
