@@ -238,7 +238,7 @@ class CombatHudDetector {
             return Map("presence", "UNKNOWN", "lock_state", "UNKNOWN", "count", 0, "lock_score", 0.0)
 
         step := 10
-        minRunSamples := Max(5, Round(width * 0.018 / step))
+        minRunSamples := Max(1, Ceil(width * 0.018 / step))
         maxRunSamples := Max(minRunSamples + 1, Round(width * 0.16 / step))
         rowSegments := []
         y := 0
@@ -271,7 +271,7 @@ class CombatHudDetector {
             }
             if (runStart >= 0)
                 CombatHudDetector.AddMarkerSegment(rowSegments, y, runStart, width - 1, runHits, minRunSamples, maxRunSamples)
-            y += 5
+            y += 3
         }
 
         candidates := []
@@ -443,7 +443,7 @@ class CombatHudDetector {
     }
 
     static IsLockGreen(r, g, b) {
-        return g >= 220 && r >= 180 && r <= 220 && b <= 180 && g - r >= 30 && g - b >= 50
+        return g >= 200 && g - r >= 20 && g - b >= 30 && b <= 200
     }
 
     static MeasureRegionColors(capture, region, step := 3) {

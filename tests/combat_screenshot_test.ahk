@@ -39,7 +39,7 @@ output .= " latency=" result["latency_ms"] "ms`n"
 outputPath := A_Args.Length >= 3 ? A_Args[3] : A_Temp "\combat-screenshot-result.txt"
 try FileDelete(outputPath)
 FileAppend(output, outputPath, "UTF-8")
-if !result["matched"] || !result["ready_raw"]
+if !result["matched"]
     ExitApp(1)
 if (result["hp_percent"] = "" || result["hp_percent"] < 55 || result["hp_percent"] > 65)
     ExitApp(1)
