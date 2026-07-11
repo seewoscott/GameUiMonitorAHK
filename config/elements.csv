@@ -1,0 +1,6 @@
+id,enabled,lane,method,capture_type,region_x,region_y,region_w,region_h,template_path,color_hex,tolerance,threshold,debounce_ms,cooldown_ms,event_type,overlay,scene
+combat_hud,true,medium,combat_hud,client,0,0,1,1,,0x000000,0,0.90,0,500,ANY,true,ANY
+room_slots,true,medium,room_slots,region,18,343,310,228,,0x000000,20,0.90,500,600,ANY,true,ROOM
+start_button,true,medium,image,region,620,620,230,120,..\develop\Data\Images\OC梦服_start_btn.png,0x000000,90,0.90,150,900,ANY,true,ROOM
+room_scene_anchor,true,slow,image,region,0,280,370,320,..\develop\Data\Images\in_room.png,0x000000,120,0.90,300,1500,ANY,false,ROOM
+room_area_change,true,slow,change,region,18,343,310,228,,0x000000,20,0.12,0,2000,ON_CHANGE,false,ROOM

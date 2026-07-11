@@ -1,0 +1,8 @@
+# Runtime logs
+/logs/
+
+# Claude Code session data
+.claude/
+
+# Windows reserved name artifact
+/nul
