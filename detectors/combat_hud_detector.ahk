@@ -238,8 +238,8 @@ class CombatHudDetector {
             return Map("presence", "UNKNOWN", "lock_state", "UNKNOWN", "count", 0, "lock_score", 0.0)
 
         step := 10
-        minRunSamples := Max(1, Ceil(width * 0.018 / step))
-        maxRunSamples := Max(minRunSamples + 1, Round(width * 0.16 / step))
+        minRunSamples := Max(1, Ceil(width * 0.015 / step))
+        maxRunSamples := Max(minRunSamples + 1, Round(width * 0.15 / step))
         rowSegments := []
         y := 0
         while (y < height) {
