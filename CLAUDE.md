@@ -140,12 +140,14 @@ Each detail field uses `AdvanceDetailField()` which tracks `{stable, pending, co
 
 ### Combat State Tracker
 
-`CombatStateTracker` is used by the scheduler for scene transitions — two instances: one for combat presence, one (legacy) for READY:
+`CombatStateTracker` is used by the scheduler for scene transitions: combat presence, room scene anchor stability, and one legacy READY tracker:
 
 | Transition | Required frames | Required ms |
 |---|---|---|
 | Combat enter | 2 (enterFrames) | 250 (enterMs) |
 | Combat exit | 3 (exitFrames) | 500 (exitMs) |
+| Room anchor appear | 2 (enterFrames) | element debounce_ms |
+| Room anchor disappear | 2 (exitFrames) | element debounce_ms |
 
 Both frame count AND elapsed time must be satisfied. `Reset()` clears pending state without forcing a transition.
 
@@ -162,9 +164,9 @@ Both frame count AND elapsed time must be satisfied. `Reset()` clears pending st
 
 `Scheduler.RunLane()` manages game state transitions:
 - **Foreground warmup**: when the game window returns to foreground, the scheduler requires 3 consecutive valid combat HUD snapshots (`foregroundWarmupRequired := 3`) before enabling detection. All overlays remain hidden during warmup.
-- **Room warmup** (`WarmupRoom`): after combat exits, the scheduler requires 3 consecutive non-empty room snapshots before room overlay resumes.
-- **Room empty timeout** (`HandleRoomSnapshot`): 3 consecutive empty snapshots mark the room as stale, hiding overlay and restarting room warmup.
-- **Scene gating** (`SceneAllowed`): ROOM-scoped elements are skipped during combat; COMBAT-scoped elements are skipped outside combat. ANY-scoped elements always run.
+- **Room anchor state** (`RunRoomSceneAnchor`): `room_scene_anchor` bypasses normal ROOM gating and independently enables or disables the room scene after 2 consecutive matches or misses. Detection errors preserve the current stable state.
+- **Room slot independence**: occupied and empty slot snapshots no longer enter or exit the room scene; they only update room contents after the anchor has confirmed the scene.
+- **Scene gating** (`SceneAllowed`): ROOM-scoped elements require both non-combat state and a confirmed room anchor; COMBAT-scoped elements are skipped outside combat. ANY-scoped elements always run.
 - **lastCombatResult persistence**: when combat is active but the current frame briefly loses HUD detection, `RunCombatHud` holds onto `this.lastCombatResult` to keep HP/SHIELD/anchor values stable instead of flickering. Only cleared on EXIT transition.
 
 ### Overlay Positioning
