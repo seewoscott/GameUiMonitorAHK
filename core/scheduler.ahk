@@ -18,11 +18,17 @@ class Scheduler {
         this.foregroundReady := false
         this.combatState := CombatStateTracker(2, 250, 3, 500)
         this.readyState := CombatStateTracker(2, 0, 2, 0)
+        roomAnchorDebounceMs := 300
+        for _, element in this.config.elements {
+            if (element["id"] = "room_scene_anchor") {
+                roomAnchorDebounceMs := element["debounce_ms"]
+                break
+            }
+        }
+        this.roomAnchorState := CombatStateTracker(2, roomAnchorDebounceMs, 2, roomAnchorDebounceMs)
         this.combatActive := false
         this.lastCombatResult := ""
         this.roomReady := false
-        this.roomWarmupCount := 0
-        this.roomEmptyCount := 0
         this.running := false
 
         for lane in ["fast", "medium", "slow"] {
@@ -114,16 +120,15 @@ class Scheduler {
             return
         }
 
+        if (element["id"] = "room_scene_anchor") {
+            this.RunRoomSceneAnchor(element, region)
+            return
+        }
+
         scene := element.Has("scene") ? element["scene"] : "ANY"
         if !Scheduler.SceneAllowed(scene, this.combatActive, this.roomReady) {
             this.overlay.Hide(element["id"])
             return
-        }
-        if (scene = "ROOM") {
-            if !this.roomReady {
-                this.WarmupRoom(element, region)
-                return
-            }
         }
 
         result := this.Detect(element, region)
@@ -132,8 +137,6 @@ class Scheduler {
             this.logger.Warn("元素 " element["id"] " 检测警告：" result["error"])
             return
         }
-        if (element["method"] = "room_slots" && this.HandleRoomSnapshot(element, result))
-            return
         eventName := this.eventBus.Process(element, result, region)
         this.overlay.Update(element, result, region, eventName)
     }
@@ -167,16 +170,16 @@ class Scheduler {
 
         if combatUpdate["changed"] {
             this.eventBus.ResetPending()
-            this.roomReady := false
-            this.roomWarmupCount := 0
-            this.roomEmptyCount := 0
+            this.roomAnchorState.Reset(false)
             if this.combatActive {
+                this.SetRoomReady(false, "进入战斗场景")
                 this.HideScene("ROOM")
                 this.logger.Info("战斗场景已确认：隐藏并暂停房间检测。")
             } else {
+                this.roomReady := false
                 this.overlay.Hide(element["id"])
                 this.lastCombatResult := ""
-                this.logger.Info("战斗场景已结束：等待 3 个有效房间快照后恢复。")
+                this.logger.Info("战斗场景已结束：等待房间场景锚点连续 2 次匹配后恢复。")
             }
         }
 
@@ -187,46 +190,39 @@ class Scheduler {
             this.overlay.Hide(element["id"])
     }
 
-    WarmupRoom(element, region) {
-        if (element["method"] != "room_slots") {
+    RunRoomSceneAnchor(element, region) {
+        if this.combatActive {
             this.overlay.Hide(element["id"])
             return
         }
+
         result := this.Detect(element, region)
-        this.LogRoomSlotMetrics(element, result, region)
-        this.overlay.Hide(element["id"])
-        if (result.Has("error") && result["error"] != "")
+        if (result.Has("error") && result["error"] != "") {
+            this.logger.Warn("房间场景锚点检测警告：" result["error"])
             return
-        if (result["occupied_count"] > 0)
-            this.roomWarmupCount += 1
-        else
-            this.roomWarmupCount := 0
-        if (this.roomWarmupCount >= 3) {
-            this.roomReady := true
-            this.roomWarmupCount := 0
-            this.roomEmptyCount := 0
-            this.eventBus.ResetRoomIdentity("房间场景完成预热")
-            this.eventBus.ResetPending()
-            this.logger.Info("房间场景已确认：连续 3 个有效且有人槽位快照。")
         }
+
+        eventName := this.eventBus.Process(element, result, region)
+        anchorUpdate := this.roomAnchorState.Update(result["matched"])
+        if anchorUpdate["changed"]
+            this.SetRoomReady(anchorUpdate["active"], anchorUpdate["active"] ? "场景锚点连续 2 次匹配" : "场景锚点连续 2 次未匹配")
+        this.overlay.Update(element, result, region, eventName)
     }
 
-    HandleRoomSnapshot(element, result) {
-        if (result["occupied_count"] > 0) {
-            this.roomEmptyCount := 0
-            return false
-        }
-        this.roomEmptyCount += 1
-        if (this.roomEmptyCount < 3)
-            return false
-        this.roomReady := false
-        this.roomWarmupCount := 0
-        this.roomEmptyCount := 0
-        this.eventBus.ResetRoomIdentity("连续 3 个空房快照")
+    SetRoomReady(ready, reason) {
+        ready := ready ? true : false
+        if (this.roomReady = ready)
+            return
+
+        this.roomReady := ready
         this.eventBus.ResetPending()
-        this.overlay.Hide(element["id"])
-        this.logger.Info("房间场景已失效：连续 3 个空房快照，等待重新预热。")
-        return true
+        this.eventBus.ResetRoomIdentity(reason)
+        if ready {
+            this.logger.Info("房间场景已确认：" reason "。")
+        } else {
+            this.HideScene("ROOM")
+            this.logger.Info("房间场景已失效：" reason "。")
+        }
     }
 
     HideScene(scene) {
@@ -241,7 +237,7 @@ class Scheduler {
         if (scene = "COMBAT")
             return combatActive
         if (scene = "ROOM")
-            return !combatActive
+            return !combatActive && roomReady
         return true
     }
 
@@ -254,6 +250,7 @@ class Scheduler {
         this.foregroundReady := false
         this.eventBus.ResetPending()
         this.combatState.Reset(this.combatActive)
+        this.roomAnchorState.Reset(this.roomReady)
         this.readyState.Reset(false)
         if isForeground {
             this.logger.Info("游戏返回前台，开始 " this.foregroundWarmupRequired " 帧槽位预热。")
