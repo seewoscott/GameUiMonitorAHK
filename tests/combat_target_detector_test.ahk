@@ -5,30 +5,45 @@
 #Include ..\capture\screen_capture.ahk
 #Include ..\detectors\combat_hud_detector.ahk
 
-imageCapture := NewCapture(1000, 800)
-region := Map("x", 80, "y", 160, "w", 840, "h", 464)
+for _, dimensions in [[1024, 768], [2048, 1536]] {
+    width := dimensions[1]
+    height := dimensions[2]
+    imageCapture := NewCapture(width, height)
+    clientRect := Map("x", 0, "y", 0, "w", width, "h", height)
+    regions := CombatHudDetector.BuildRegions(clientRect)
+    scale := CombatHudDetector.BuildSamplingScale(clientRect)
+    targetRegion := regions["target"]
+    lockRegion := regions["lock"]
+    labelPrefix := width "x" height " "
 
-DrawDirectionArrow(imageCapture, region)
-direction := CombatHudDetector.AnalyzeTargetMarkers(imageCapture, region)
-AssertPresence(direction, "ABSENT", "direction arrow")
+    empty := CombatHudDetector.AnalyzeTargetMarkers(imageCapture, targetRegion, scale["x"], scale["y"])
+    AssertPresence(empty, "ABSENT", labelPrefix "empty frame")
 
-ClearCapture(imageCapture)
-DrawEnemyMarker(imageCapture, region, 0.50, 0.48)
-centered := CombatHudDetector.AnalyzeTargetMarkers(imageCapture, region)
-AssertPresence(centered, "PRESENT", "centered enemy marker")
+    DrawDirectionArrow(imageCapture, targetRegion, scale["x"], scale["y"])
+    direction := CombatHudDetector.AnalyzeTargetMarkers(imageCapture, targetRegion, scale["x"], scale["y"])
+    AssertPresence(direction, "ABSENT", labelPrefix "direction arrow")
 
-ClearCapture(imageCapture)
-DrawEnemyMarker(imageCapture, region, 0.72, 0.36)
-offCenter := CombatHudDetector.AnalyzeTargetMarkers(imageCapture, region)
-AssertPresence(offCenter, "PRESENT", "off-center enemy marker")
+    ClearCapture(imageCapture)
+    DrawEnemyMarker(imageCapture, targetRegion, 0.50, 0.48, scale["x"], scale["y"])
+    centered := CombatHudDetector.AnalyzeTargetMarkers(imageCapture, targetRegion, scale["x"], scale["y"])
+    AssertPresence(centered, "PRESENT", labelPrefix "centered enemy marker")
 
-ClearCapture(imageCapture)
-lockRegion := Map("x", 380, "y", 240, "w", 240, "h", 336)
-if (CombatHudDetector.DetectLockBrackets(imageCapture, lockRegion) != "UNLOCKED")
-    ExitApp(1)
-DrawLockBrackets(imageCapture, lockRegion)
-if (CombatHudDetector.DetectLockBrackets(imageCapture, lockRegion) != "LOCKED")
-    ExitApp(1)
+    ClearCapture(imageCapture)
+    DrawEnemyMarker(imageCapture, targetRegion, 0.72, 0.36, scale["x"], scale["y"])
+    offCenter := CombatHudDetector.AnalyzeTargetMarkers(imageCapture, targetRegion, scale["x"], scale["y"])
+    AssertPresence(offCenter, "PRESENT", labelPrefix "off-center enemy marker")
+
+    ClearCapture(imageCapture)
+    if (CombatHudDetector.DetectLockBrackets(imageCapture, lockRegion, scale["x"], scale["y"]) != "UNLOCKED")
+        ExitApp(1)
+    DrawSingleLockBracket(imageCapture, lockRegion, scale["x"], scale["y"])
+    if (CombatHudDetector.DetectLockBrackets(imageCapture, lockRegion, scale["x"], scale["y"]) != "UNLOCKED")
+        ExitApp(1)
+    ClearCapture(imageCapture)
+    DrawLockBrackets(imageCapture, lockRegion, scale["x"], scale["y"])
+    if (CombatHudDetector.DetectLockBrackets(imageCapture, lockRegion, scale["x"], scale["y"]) != "LOCKED")
+        ExitApp(1)
+}
 
 ExitApp(0)
 
@@ -37,53 +52,62 @@ NewCapture(width, height) {
     return Map("ok", true, "error", "", "x", 0, "y", 0, "w", width, "h", height, "stride", width * 4, "bits", bits)
 }
 
-ClearCapture(imageCapture) {
-    DllCall("RtlZeroMemory", "Ptr", imageCapture["bits"].Ptr, "UPtr", imageCapture["bits"].Size)
+ClearCapture(capture) {
+    DllCall("RtlZeroMemory", "Ptr", capture["bits"].Ptr, "UPtr", capture["bits"].Size)
 }
 
-DrawDirectionArrow(imageCapture, region) {
+DrawDirectionArrow(capture, region, scaleX, scaleY) {
     x := region["x"] + Round(region["w"] * 0.48)
     y := region["y"] + Round(region["h"] * 0.25)
-    FillRegion(imageCapture, Map("x", x, "y", y, "w", 70, "h", 3), 230, 40, 40)
-    FillRegion(imageCapture, Map("x", x, "y", y + 14, "w", 70, "h", 3), 230, 40, 40)
-    FillRegion(imageCapture, Map("x", x + 60, "y", y, "w", 3, "h", 90), 230, 40, 40)
+    lineW := Round(70 * scaleX)
+    lineH := Max(1, Round(3 * scaleY))
+    FillRegion(capture, Map("x", x, "y", y, "w", lineW, "h", lineH), 230, 40, 40)
+    FillRegion(capture, Map("x", x, "y", y + Round(14 * scaleY), "w", lineW, "h", lineH), 230, 40, 40)
+    FillRegion(capture, Map("x", x + Round(35 * scaleX), "y", y, "w", Max(1, Round(3 * scaleX)), "h", Round(90 * scaleY)), 230, 40, 40)
 }
 
-DrawEnemyMarker(imageCapture, region, centerXRatio, centerYRatio) {
+DrawEnemyMarker(capture, region, centerXRatio, centerYRatio, scaleX, scaleY) {
     width := Round(region["w"] * 0.08)
     left := region["x"] + Round(region["w"] * centerXRatio - width / 2)
-    top := region["y"] + Round(region["h"] * centerYRatio - 8)
-    FillRegion(imageCapture, Map("x", left, "y", top, "w", width, "h", 3), 230, 40, 40)
-    FillRegion(imageCapture, Map("x", left, "y", top + 16, "w", width, "h", 3), 230, 40, 40)
-    FillRegion(imageCapture, Map("x", left + 10, "y", top - 18, "w", 28, "h", 6), 230, 40, 40)
-    FillRegion(imageCapture, Map("x", left + 18, "y", top + 24, "w", 8, "h", 8), 230, 40, 40)
-    FillRegion(imageCapture, Map("x", left + 36, "y", top + 24, "w", 8, "h", 8), 230, 40, 40)
+    top := region["y"] + Round(region["h"] * centerYRatio - 8 * scaleY)
+    lineH := Max(1, Round(3 * scaleY))
+    FillRegion(capture, Map("x", left, "y", top, "w", width, "h", lineH), 230, 40, 40)
+    FillRegion(capture, Map("x", left, "y", top + Round(16 * scaleY), "w", width, "h", lineH), 230, 40, 40)
+    FillRegion(capture, Map("x", left + Round(10 * scaleX), "y", top - Round(18 * scaleY), "w", Round(28 * scaleX), "h", Round(6 * scaleY)), 230, 40, 40)
+    FillRegion(capture, Map("x", left + Round(18 * scaleX), "y", top + Round(24 * scaleY), "w", Round(8 * scaleX), "h", Round(8 * scaleY)), 230, 40, 40)
+    FillRegion(capture, Map("x", left + Round(36 * scaleX), "y", top + Round(24 * scaleY), "w", Round(8 * scaleX), "h", Round(8 * scaleY)), 230, 40, 40)
 }
 
-DrawLockBrackets(imageCapture, region) {
+DrawSingleLockBracket(capture, region, scaleX, scaleY) {
     left := region["x"] + Round(region["w"] * 0.28)
+    top := region["y"] + Round(region["h"] * 0.30)
+    height := Round(region["h"] * 0.38)
+    FillRegion(capture, Map("x", left, "y", top, "w", Max(1, Round(5 * scaleX)), "h", height), 120, 230, 120)
+    FillRegion(capture, Map("x", left, "y", top, "w", Round(28 * scaleX), "h", Max(1, Round(5 * scaleY))), 120, 230, 120)
+}
+
+DrawLockBrackets(capture, region, scaleX, scaleY) {
+    DrawSingleLockBracket(capture, region, scaleX, scaleY)
     right := region["x"] + Round(region["w"] * 0.70)
     top := region["y"] + Round(region["h"] * 0.30)
     height := Round(region["h"] * 0.38)
-    FillRegion(imageCapture, Map("x", left, "y", top, "w", 5, "h", height), 120, 230, 120)
-    FillRegion(imageCapture, Map("x", right, "y", top, "w", 5, "h", height), 120, 230, 120)
-    FillRegion(imageCapture, Map("x", left, "y", top, "w", 28, "h", 5), 120, 230, 120)
-    FillRegion(imageCapture, Map("x", right - 24, "y", top, "w", 28, "h", 5), 120, 230, 120)
+    FillRegion(capture, Map("x", right, "y", top, "w", Max(1, Round(5 * scaleX)), "h", height), 120, 230, 120)
+    FillRegion(capture, Map("x", right - Round(24 * scaleX), "y", top, "w", Round(28 * scaleX), "h", Max(1, Round(5 * scaleY))), 120, 230, 120)
 }
 
-FillRegion(imageCapture, region, r, g, b) {
-    x1 := Max(0, region["x"] - imageCapture["x"])
-    y1 := Max(0, region["y"] - imageCapture["y"])
-    x2 := Min(imageCapture["w"] - 1, x1 + region["w"] - 1)
-    y2 := Min(imageCapture["h"] - 1, y1 + region["h"] - 1)
+FillRegion(capture, region, r, g, b) {
+    x1 := Max(0, Round(region["x"] - capture["x"]))
+    y1 := Max(0, Round(region["y"] - capture["y"]))
+    x2 := Min(capture["w"] - 1, x1 + Max(1, Round(region["w"])) - 1)
+    y2 := Min(capture["h"] - 1, y1 + Max(1, Round(region["h"])) - 1)
     y := y1
     while (y <= y2) {
         x := x1
         while (x <= x2) {
-            offset := y * imageCapture["stride"] + x * 4
-            NumPut("UChar", b, imageCapture["bits"], offset)
-            NumPut("UChar", g, imageCapture["bits"], offset + 1)
-            NumPut("UChar", r, imageCapture["bits"], offset + 2)
+            offset := y * capture["stride"] + x * 4
+            NumPut("UChar", b, capture["bits"], offset)
+            NumPut("UChar", g, capture["bits"], offset + 1)
+            NumPut("UChar", r, capture["bits"], offset + 2)
             x += 1
         }
         y += 1

@@ -306,7 +306,7 @@ class Scheduler {
             case "color":
                 return ColorDetector.Detect(element, region)
             case "image":
-                return ImageDetector.Detect(element, region, this.config.root)
+                return ImageDetector.Detect(element, region, this.config.root, this.window.GetPrimaryPhysicalSize())
             case "change":
                 return ChangeDetector.Detect(element, region)
             case "room_slots":

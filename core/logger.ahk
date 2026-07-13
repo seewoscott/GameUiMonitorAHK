@@ -57,7 +57,9 @@ class MonitorLogger {
         if !this.config.loggingEnabled
             return
         line := NowStamp() " [" level "] " message
-        FileAppend(line "`n", this.textLog, "UTF-8")
+        try FileAppend(line "`n", this.textLog, "UTF-8")
+        catch
+            OutputDebug("写入日志失败：" this.textLog)
         OutputDebug(line)
     }
 
@@ -77,7 +79,9 @@ class MonitorLogger {
         eventData["message_zh"] := message
 
         json := this.ToJsonLine(eventData)
-        FileAppend(json "`n", this.eventLog, "UTF-8")
+        try FileAppend(json "`n", this.eventLog, "UTF-8")
+        catch
+            OutputDebug("写入事件日志失败：" this.eventLog)
         this.WriteText("事件", message)
     }
 

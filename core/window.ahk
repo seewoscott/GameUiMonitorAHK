@@ -6,6 +6,7 @@ class WindowManager {
         this.logger := logger
         this.hwnd := 0
         this.lastWarnTick := 0
+        this.displayFallbackWarned := false
     }
 
     FindTarget(logMissing := true) {
@@ -81,6 +82,29 @@ class WindowManager {
         } catch {
             return false
         }
+    }
+
+    GetPrimaryPhysicalSize() {
+        size := WindowManager.QueryPrimaryPhysicalSize()
+        if (!size["physical"] && !this.displayFallbackWarned) {
+            this.logger.Warn("无法读取主显示器物理分辨率，模板档案回退使用 A_ScreenWidth/A_ScreenHeight。")
+            this.displayFallbackWarned := true
+        }
+        return size
+    }
+
+    static QueryPrimaryPhysicalSize() {
+        try {
+            devMode := Buffer(220, 0)
+            NumPut("UShort", devMode.Size, devMode, 68)
+            if DllCall("EnumDisplaySettingsW", "Ptr", 0, "Int", -1, "Ptr", devMode.Ptr, "Int") {
+                width := NumGet(devMode, 172, "UInt")
+                height := NumGet(devMode, 176, "UInt")
+                if (width > 0 && height > 0)
+                    return Map("w", width, "h", height, "physical", true)
+            }
+        }
+        return Map("w", A_ScreenWidth, "h", A_ScreenHeight, "physical", false)
     }
 
     static ScaleRegion(element, rect, referenceWidth, referenceHeight) {

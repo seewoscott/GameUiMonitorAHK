@@ -41,7 +41,7 @@ class OverlayManager {
         } else {
             w := result.Has("slots") ? Max(Round(region["w"] * 2 / 3), 100) : 300
             h := result.Has("slots") ? Max(region["h"], 184) : 128
-            position := OverlayManager.PlaceOutsideRegion(region, w, h, A_ScreenWidth, A_ScreenHeight)
+            position := OverlayManager.PlaceOutsideRegion(region, w, h, OverlayManager.GetPrimaryWorkArea())
         }
         item["text"].Move(4, 3, Max(130, w - 8), Max(44, h - 8))
         item["gui"].Show("x" position["x"] " y" position["y"] " w" w " h" h " NA")
@@ -113,23 +113,36 @@ class OverlayManager {
         return Map("gui", g, "text", txt)
     }
 
-    static PlaceOutsideRegion(region, w, h, screenW, screenH, gap := 8) {
+    static GetPrimaryWorkArea() {
+        try {
+            monitorNumber := MonitorGetPrimary()
+            MonitorGetWorkArea(monitorNumber, &left, &top, &right, &bottom)
+            return Map("left", left, "top", top, "right", right, "bottom", bottom)
+        }
+        return Map("left", 0, "top", 0, "right", A_ScreenWidth, "bottom", A_ScreenHeight)
+    }
+
+    static PlaceOutsideRegion(region, w, h, workArea, gap := 8) {
+        leftEdge := workArea["left"]
+        topEdge := workArea["top"]
+        rightEdge := workArea["right"]
+        bottomEdge := workArea["bottom"]
         rightX := region["x"] + region["w"] + gap
-        if (rightX + w <= screenW)
-            return Map("x", rightX, "y", Round(Clamp(region["y"], 0, Max(0, screenH - h))))
+        if (rightX + w <= rightEdge)
+            return Map("x", rightX, "y", Round(Clamp(region["y"], topEdge, Max(topEdge, bottomEdge - h))))
 
         leftX := region["x"] - gap - w
-        if (leftX >= 0)
-            return Map("x", leftX, "y", Round(Clamp(region["y"], 0, Max(0, screenH - h))))
+        if (leftX >= leftEdge)
+            return Map("x", leftX, "y", Round(Clamp(region["y"], topEdge, Max(topEdge, bottomEdge - h))))
 
         belowY := region["y"] + region["h"] + gap
-        if (belowY + h <= screenH)
-            return Map("x", Round(Clamp(region["x"], 0, Max(0, screenW - w))), "y", belowY)
+        if (belowY + h <= bottomEdge)
+            return Map("x", Round(Clamp(region["x"], leftEdge, Max(leftEdge, rightEdge - w))), "y", belowY)
 
         aboveY := region["y"] - gap - h
         return Map(
-            "x", Round(Clamp(region["x"], 0, Max(0, screenW - w))),
-            "y", Round(Clamp(aboveY, 0, Max(0, screenH - h)))
+            "x", Round(Clamp(region["x"], leftEdge, Max(leftEdge, rightEdge - w))),
+            "y", Round(Clamp(aboveY, topEdge, Max(topEdge, bottomEdge - h)))
         )
     }
 
