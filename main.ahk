@@ -42,7 +42,7 @@ StartMonitorApp(*) {
 }
 
 class MonitorApp {
-    static Version := "v1.6-self-border"
+    static Version := "v2.0-dual-resolution"
 
     __New() {
         this.root := A_ScriptDir
@@ -61,7 +61,7 @@ class MonitorApp {
     Start() {
         this.logger.Info(this.config.appName " 启动，项目目录：" this.root)
         this.logger.Info("会话：" this.sessionId "；代码版本：" MonitorApp.Version)
-        this.logger.Info("当前版本：v1 纯 AHK，未启用 Python Worker。")
+        this.logger.Info("当前版本：Monitor v2.0 纯 AHK，未启用 Python Worker。")
         this.logger.Info("目标：" this.config.targetLabel)
         this.logger.Info("Demo 测试窗口仅用于开发调试，启动时不会自动运行。")
         this.logger.Info("核心输出：房间大厅 " RoomStateDetector.SlotCount " 个可见玩家槽位状态。")
@@ -128,6 +128,8 @@ class MonitorApp {
 
     LogStartupGeometry() {
         this.logger.Info("坐标基准：" this.config.referenceWidth "x" this.config.referenceHeight)
+        displaySize := this.window.GetPrimaryPhysicalSize()
+        this.logger.Info("主显示器物理分辨率：" displaySize["w"] "x" displaySize["h"])
         if !this.window.FindTarget(false) {
             this.logger.Info("启动时未找到游戏窗口，首次检测时再计算槽位区域。")
             return

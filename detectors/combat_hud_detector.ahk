@@ -2,6 +2,8 @@
 
 class CombatHudDetector {
     static RequiredAnchorHits := 2
+    static ReferenceClientWidth := 1024
+    static ReferenceClientHeight := 768
 
     static Detect(element, clientRect, sourceCapture := "") {
         start := A_TickCount
@@ -34,13 +36,15 @@ class CombatHudDetector {
         if (errorMessage = "" && captures.Has("lock") && !captures["lock"]["ok"])
             errorMessage := "combat view capture failed: " captures["lock"]["error"]
 
-        result := CombatHudDetector.Analyze(regions, captures)
+        result := CombatHudDetector.Analyze(regions, captures, CombatHudDetector.BuildSamplingScale(clientRect))
         result["latency_ms"] := A_TickCount - start
         result["error"] := errorMessage
         return result
     }
 
-    static Analyze(regions, captures) {
+    static Analyze(regions, captures, samplingScale := "") {
+        if !IsObject(samplingScale)
+            samplingScale := Map("x", 1.0, "y", 1.0)
         leftStats := CombatHudDetector.MeasureHudColors(captures["left"], regions["left"])
         scoreStats := CombatHudDetector.MeasureHudColors(captures["score"], regions["score"])
         radarStats := CombatHudDetector.MeasureHudColors(captures["radar"], regions["radar"])
@@ -56,9 +60,9 @@ class CombatHudDetector {
         selectedWeapon := matched ? CombatHudDetector.DetectSelectedWeapon(captures["weapons"], regions["weapon_slots"]) : 0
         weaponSlots := matched ? CombatHudDetector.DetectWeaponSlots(captures["weapons"], regions["weapon_slots"], selectedWeapon) : CombatHudDetector.UnknownWeaponSlots()
         markerAnalysis := matched
-            ? CombatHudDetector.AnalyzeTargetMarkers(captures["target"], regions["target"])
+            ? CombatHudDetector.AnalyzeTargetMarkers(captures["target"], regions["target"], samplingScale["x"], samplingScale["y"])
             : Map("presence", "UNKNOWN", "lock_state", "UNKNOWN", "count", 0, "lock_score", 0.0)
-        lockState := matched ? CombatHudDetector.DetectLockBrackets(captures["lock"], regions["lock"]) : "UNKNOWN"
+        lockState := matched ? CombatHudDetector.DetectLockBrackets(captures["lock"], regions["lock"], samplingScale["x"], samplingScale["y"]) : "UNKNOWN"
         markerAnalysis["lock_score"] := lockState = "LOCKED" ? 1.0 : 0.0
         targetPresence := markerAnalysis["presence"]
 
@@ -130,6 +134,17 @@ class CombatHudDetector {
         return Map("x", x1, "y", y1, "w", Max(1, x2 - x1), "h", Max(1, y2 - y1))
     }
 
+    static BuildSamplingScale(clientRect) {
+        return Map(
+            "x", Max(0.01, clientRect["w"] / CombatHudDetector.ReferenceClientWidth),
+            "y", Max(0.01, clientRect["h"] / CombatHudDetector.ReferenceClientHeight)
+        )
+    }
+
+    static ScaleSampleStep(baseStep, scale) {
+        return Max(1, Round(baseStep * scale))
+    }
+
     static DetectSelectedWeapon(capture, slotRegions) {
         bestIndex := 0
         bestScore := 0.0
@@ -171,11 +186,11 @@ class CombatHudDetector {
         return slots
     }
 
-    static DetectLockState(capture, region) {
-        return CombatHudDetector.DetectLockBrackets(capture, region)
+    static DetectLockState(capture, region, scaleX := 1.0, scaleY := 1.0) {
+        return CombatHudDetector.DetectLockBrackets(capture, region, scaleX, scaleY)
     }
 
-    static DetectLockBrackets(capture, region) {
+    static DetectLockBrackets(capture, region, scaleX := 1.0, scaleY := 1.0) {
         if !capture["ok"]
             return "UNKNOWN"
         x1 := Max(0, Round(region["x"] - capture["x"]))
@@ -191,7 +206,8 @@ class CombatHudDetector {
         leftMaxY := y1
         rightMinY := y2
         rightMaxY := y1
-        step := 3
+        stepX := CombatHudDetector.ScaleSampleStep(3, scaleX)
+        stepY := CombatHudDetector.ScaleSampleStep(3, scaleY)
         y := y1
         while (y <= y2) {
             rowOffset := y * capture["stride"]
@@ -212,22 +228,22 @@ class CombatHudDetector {
                         rightMaxY := Max(rightMaxY, y)
                     }
                 }
-                x += step
+                x += stepX
             }
-            y += step
+            y += stepY
         }
-        minCount := Max(4, Round((region["w"] / step) * 0.025))
+        minCount := Max(4, Round((region["w"] / stepX) * 0.025))
         minSpan := region["h"] * 0.10
         symmetric := leftCount >= minCount && rightCount >= minCount
         verticalShape := leftMaxY - leftMinY >= minSpan && rightMaxY - rightMinY >= minSpan
         return symmetric && verticalShape ? "LOCKED" : "UNLOCKED"
     }
 
-    static DetectTargetPresence(capture, region) {
-        return CombatHudDetector.AnalyzeTargetMarkers(capture, region)["presence"]
+    static DetectTargetPresence(capture, region, scaleX := 1.0, scaleY := 1.0) {
+        return CombatHudDetector.AnalyzeTargetMarkers(capture, region, scaleX, scaleY)["presence"]
     }
 
-    static AnalyzeTargetMarkers(capture, region) {
+    static AnalyzeTargetMarkers(capture, region, scaleX := 1.0, scaleY := 1.0) {
         if !capture["ok"]
             return Map("presence", "UNKNOWN", "lock_state", "UNKNOWN", "count", 0, "lock_score", 0.0)
         localX := Max(0, Round(region["x"] - capture["x"]))
@@ -237,9 +253,12 @@ class CombatHudDetector {
         if (width <= 0 || height <= 0)
             return Map("presence", "UNKNOWN", "lock_state", "UNKNOWN", "count", 0, "lock_score", 0.0)
 
-        step := 10
-        minRunSamples := Max(1, Ceil(width * 0.015 / step))
-        maxRunSamples := Max(minRunSamples + 1, Round(width * 0.15 / step))
+        stepX := CombatHudDetector.ScaleSampleStep(10, scaleX)
+        stepY := CombatHudDetector.ScaleSampleStep(3, scaleY)
+        supportStepX := CombatHudDetector.ScaleSampleStep(3, scaleX)
+        supportStepY := CombatHudDetector.ScaleSampleStep(3, scaleY)
+        minRunSamples := Max(1, Ceil(width * 0.015 / stepX))
+        maxRunSamples := Max(minRunSamples + 1, Round(width * 0.15 / stepX))
         rowSegments := []
         y := 0
         while (y < height) {
@@ -261,17 +280,17 @@ class CombatHudDetector {
                 } else if (runStart >= 0) {
                     gap += 1
                     if (gap > 1) {
-                        CombatHudDetector.AddMarkerSegment(rowSegments, y, runStart, x - gap * step, runHits, minRunSamples, maxRunSamples)
+                        CombatHudDetector.AddMarkerSegment(rowSegments, y, runStart, x - gap * stepX, runHits, minRunSamples, maxRunSamples)
                         runStart := -1
                         runHits := 0
                         gap := 0
                     }
                 }
-                x += step
+                x += stepX
             }
             if (runStart >= 0)
                 CombatHudDetector.AddMarkerSegment(rowSegments, y, runStart, width - 1, runHits, minRunSamples, maxRunSamples)
-            y += 3
+            y += stepY
         }
 
         candidates := []
@@ -302,7 +321,8 @@ class CombatHudDetector {
                         localY + Max(0, first["y"] - height * 0.065),
                         Min(width - 1, right + supportWidth * 0.35) - Max(0, left - supportWidth * 0.35),
                         Max(1, first["y"] - Max(0, first["y"] - height * 0.065)),
-                        3
+                        supportStepX,
+                        supportStepY
                     )
                     below := CombatHudDetector.CountEnemyRed(
                         capture,
@@ -310,15 +330,17 @@ class CombatHudDetector {
                         localY + second["y"],
                         Min(width - 1, right + supportWidth * 0.25) - Max(0, left - supportWidth * 0.25),
                         Max(1, Min(height - second["y"], height * 0.075)),
-                        3
+                        supportStepX,
+                        supportStepY
                     )
-                    minSupport := Max(2, Round(supportWidth / step * 0.05))
+                    minSupport := Max(2, Round(supportWidth / stepX * 0.05))
                     hasArrowStem := CombatHudDetector.HasLongRedStem(
                         capture,
                         localX + left,
                         localY + first["y"],
                         supportWidth,
-                        Min(height - first["y"], Max(supportWidth * 1.6, height * 0.12))
+                        Min(height - first["y"], Max(supportWidth * 1.6, height * 0.12)),
+                        scaleY
                     )
                     supportConfirmed := (
                         (above >= minSupport && below >= minSupport)
@@ -368,7 +390,9 @@ class CombatHudDetector {
         return shorter > 0 ? overlap / shorter : 0.0
     }
 
-    static CountEnemyRed(capture, x, y, width, height, step := 3) {
+    static CountEnemyRed(capture, x, y, width, height, stepX := 3, stepY := "") {
+        if (stepY = "")
+            stepY := stepX
         x1 := Max(0, Round(x))
         y1 := Max(0, Round(y))
         x2 := Min(capture["w"] - 1, x1 + Max(1, Round(width)) - 1)
@@ -385,16 +409,17 @@ class CombatHudDetector {
                 r := (pixel >> 16) & 255
                 if CombatHudDetector.IsEnemyMarkerRed(r, g, b)
                     count += 1
-                sampleX += step
+                sampleX += stepX
             }
-            sampleY += step
+            sampleY += stepY
         }
         return count
     }
 
-    static HasLongRedStem(capture, x, y, width, height) {
+    static HasLongRedStem(capture, x, y, width, height, scaleY := 1.0) {
         sampleXs := [x + width * 0.12, x + width * 0.50, x + width * 0.88]
         requiredRun := Max(10, Round(width * 0.35))
+        stepY := CombatHudDetector.ScaleSampleStep(2, scaleY)
         for _, sampleX in sampleXs {
             longest := 0
             current := 0
@@ -406,12 +431,12 @@ class CombatHudDetector {
                 g := (pixel >> 8) & 255
                 r := (pixel >> 16) & 255
                 if CombatHudDetector.IsEnemyMarkerRed(r, g, b) {
-                    current += 2
+                    current += stepY
                     longest := Max(longest, current)
                 } else {
                     current := 0
                 }
-                sampleY += 2
+                sampleY += stepY
             }
             if (longest >= requiredRun)
                 return true
