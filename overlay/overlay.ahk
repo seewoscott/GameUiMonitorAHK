@@ -5,6 +5,8 @@ class OverlayManager {
         this.config := config
         this.logger := logger
         this.items := Map()
+        this.selfDebugEnabled := false
+        this.selfDebugRects := Map()
     }
 
     Update(element, result, region, eventName := "") {
@@ -57,7 +59,8 @@ class OverlayManager {
 
     BuildSlotText(result, eventName := "") {
         titleStatus := eventName != "" ? EventZh(eventName) : "稳定"
-        text := "房间槽位 " titleStatus " " result["latency_ms"] "ms`n"
+        debugFlag := this.selfDebugEnabled ? " [[调试中]]" : ""
+        text := "房间槽位 " titleStatus " " result["latency_ms"] "ms" debugFlag "`n"
         text .= "有人 " result["occupied_count"] "，房主 " result["master_count"] "，已准备 " result["ready_count"] "`n"
         if (!result.Has("self_slot_index") || result["self_slot_index"] <= 0)
             text .= "本人：待确认`n"
@@ -167,5 +170,73 @@ class OverlayManager {
         for _, item in this.items {
             try item["gui"].Hide()
         }
+        if this.HasOwnProp("testRect")
+            try this.testRect.Hide()
+        this.HideSelfBorderDebug()
+    }
+
+    ToggleSelfDebug() {
+        this.selfDebugEnabled := !this.selfDebugEnabled
+        this.logger.Info("自身槽位调试 " (this.selfDebugEnabled ? "开启" : "关闭"))
+        if !this.selfDebugEnabled {
+            if this.HasOwnProp("testRect")
+                try this.testRect.Hide()
+            return this.HideSelfBorderDebug()
+        }
+
+        ; 测试矩形：屏幕 (200,100) 200x50 不透明红色，确认 GUI 链路正常
+        if !this.HasOwnProp("testRect")
+            this.testRect := OverlayManager.CreateDebugRect()
+        this.testRect.BackColor := "FF0000"
+        this.testRect.Show("x200 y100 w200 h50 NA")
+        WinSetTransparent(255, "ahk_id " this.testRect.Hwnd)
+        this.logger.Info("调试测试矩形显示：x=200 y=100 w=200 h=50")
+    }
+
+    ShowSelfBorderDebug(slots) {
+        if !this.selfDebugEnabled
+            return
+        if !IsObject(slots) || slots.Length = 0
+            return
+
+        maxIdx := 0
+        for _, s in slots
+            maxIdx := Max(maxIdx, s["index"])
+        if maxIdx = 0
+            return
+
+        Loop maxIdx {
+            if !this.selfDebugRects.Has(A_Index)
+                this.selfDebugRects[A_Index] := OverlayManager.CreateDebugRect()
+        }
+
+        for _, slot in slots {
+            idx := slot["index"]
+            gui := this.selfDebugRects[idx]
+            if !slot["occupied"] {
+                try gui.Hide()
+                continue
+            }
+            r := slot["region"]
+            x := r[1], y := r[2], w := r[3], h := r[4]
+            bandX := x + Max(1, Round(230 * w / 310))
+            bandW := Max(1, Max(1, Round(244 * w / 310)) - Max(1, Round(230 * w / 310)))
+
+            try gui.Show("x" bandX " y" y " w" bandW " h" h " NA")
+            try WinSetTransparent(191, "ahk_id " gui.Hwnd)
+        }
+    }
+
+    HideSelfBorderDebug() {
+        for _, gui in this.selfDebugRects {
+            try gui.Hide()
+        }
+    }
+
+    static CreateDebugRect() {
+        g := Gui("-Caption +ToolWindow +AlwaysOnTop -DPIScale")
+        g.BackColor := "00FFFF"
+        g.Hide()
+        return g
     }
 }

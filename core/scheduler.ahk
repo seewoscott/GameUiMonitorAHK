@@ -98,8 +98,15 @@ class Scheduler {
         isCombatHud := element["method"] = "combat_hud"
         region := isCombatHud ? this.window.GetTargetClientRect() : this.window.RegionToScreen(element)
         if !this.foregroundReady {
-            if !isCombatHud
+            if !isCombatHud {
+                ; Debug: 预热期间仍显示 room_slots 青色边框
+                if (element["method"] = "room_slots" && this.overlay.selfDebugEnabled) {
+                    debugResult := this.Detect(element, region)
+                    if debugResult.Has("slots")
+                        this.overlay.ShowSelfBorderDebug(debugResult["slots"])
+                }
                 return
+            }
             result := this.Detect(element, region)
             if (result.Has("error") && result["error"] != "")
                 return
@@ -128,6 +135,12 @@ class Scheduler {
         scene := element.Has("scene") ? element["scene"] : "ANY"
         if !Scheduler.SceneAllowed(scene, this.combatActive, this.roomReady) {
             this.overlay.Hide(element["id"])
+            ; Debug: room_slots 场景尚未确认时，仍显示青色边框调试矩形
+            if (element["method"] = "room_slots" && this.overlay.selfDebugEnabled) {
+                debugResult := this.Detect(element, region)
+                if debugResult.Has("slots")
+                    this.overlay.ShowSelfBorderDebug(debugResult["slots"])
+            }
             return
         }
 
@@ -139,6 +152,8 @@ class Scheduler {
         }
         eventName := this.eventBus.Process(element, result, region)
         this.overlay.Update(element, result, region, eventName)
+        if (element["method"] = "room_slots" && result.Has("slots"))
+            this.overlay.ShowSelfBorderDebug(result["slots"])
     }
 
     RunCombatHud(element, clientRect) {

@@ -145,7 +145,9 @@ class RoomStateDetector {
         minEdge := Min(top, bottom)
         averageEdge := (top + bottom) / 2
         score := 100 * Clamp(0.65 * minEdge + 0.35 * averageEdge, 0, 1)
-        eligible := minEdge >= RoomStateDetector.SelfMinEdgeCoverage
+        bothDetected := top > 0 && bottom > 0
+        effectiveMinEdge := Min(1.0, minEdge * (bothDetected ? 1.4 : 1.0))
+        eligible := effectiveMinEdge >= RoomStateDetector.SelfMinEdgeCoverage
         return Map(
             "top", top,
             "bottom", bottom,
